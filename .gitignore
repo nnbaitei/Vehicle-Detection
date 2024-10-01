@@ -10,3 +10,6 @@ weights/*
 *.avi
 *.csv
 events.out.tfevents.1727333771.nnbaitei.13656.0
+events.out.tfevents.1727333771.nnbaitei.13656.0
+README.dataset.txt
+README.roboflow.txt
