@@ -1,42 +1,41 @@
-import cv2
-import torch
+import cv2 as cv
+from glob import glob
+import os
+import random
+from ultralytics import YOLO
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s').to(device)
+# read in video paths
+videos = glob("dataset/car.mp4")
+print(videos)
 
-def detect_vehicles(video_path):
-    cap = cv2.VideoCapture(video_path)
+model_pretrained = YOLO('yolov5s.pt')
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+video = cv.VideoCapture(videos[0])
 
-        frame_resized = cv2.resize(frame, (640, 480)) 
+# get video dims
+frame_width = int(video.get(3))
+frame_height = int(video.get(4))
+size = (frame_width, frame_height)
 
-        results = model(frame_resized)
+# Define the codec and create VideoWriter object
+fourcc = cv.VideoWriter_fourcc(*'DIVX')
+out = cv.VideoWriter('car_detect.avi', fourcc, 20.0, size)
 
-        detections = results.pred[0] 
-        for *xyxy, conf, cls in detections:
-            if int(cls) == 2:  
-                x1, y1, x2, y2 = map(int, xyxy)  
-                cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)  
-                cv2.putText(frame_resized, f'Car {conf:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+# read frames
+ret = True
 
-        cv2.imshow('Vehicle Detection', frame_resized)
+while ret:
+    ret, frame = video.read()
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    if ret:
+        # detect & track objects
+        results = model_pretrained.track(frame, persist=True, classes=[2, 7])
 
-    cap.release()
-    cv2.destroyAllWindows()
+        # plot results
+        composed = results[0].plot()
 
-video_path = r"dataset/car.mp4"
-detect_vehicles(video_path)
+        # save video
+        out.write(composed)
 
-# import torch
-
-# # ตรวจสอบว่า GPU พร้อมใช้งาน
-# print("CUDA available:", torch.cuda.is_available())
-# print("Number of GPUs:", torch.cuda.device_count())
-# print("Current GPU:", torch.cuda.current_device())
+out.release()
+video.release()
