@@ -1,4 +1,12 @@
 venv
 *.pt
-runs/*
-
+train/*
+test/*
+valid/*
+outputs/*
+weights/*
+*.yaml
+*.jpg
+*.avi
+*.csv
+events.out.tfevents.1727333771.nnbaitei.13656.0
