@@ -1,176 +1,160 @@
-import ast
 import cv2 as cv
 import easyocr
+import os
 from glob import glob
 import numpy as np
 import pandas as pd
-import string
 from ultralytics import YOLO
-import matplotlib.pyplot as plt
 
-# regular pre-trained yolov8 model for car recognition
-# coco_model = YOLO('yolov8n.pt')
+# pre-trained YOLOv8 model for car recognition
 coco_model = YOLO('yolov8n.pt')
-# yolov8 model trained to detect number plates
+# yolov8 model trained to detect license plates
 np_model = YOLO(r'runs\detect\license_plate_detection\weights\best.pt')
 
 # read in test video paths
 videos = glob(r'D:\Y4\สหกิจ\Vehicle-Detection\car_detect.avi')
 
+# Set up EasyOCR reader
 reader = easyocr.Reader(['th'], gpu=True)
 
+# Create folder for saving license plate images
+output_folder = './detected_license_plates'
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
+
+# Function to read license plates using EasyOCR
 def read_license_plate(license_plate_crop):
-    # plt.imshow(license_plate_crop)
-    # plt.show()
     detections = reader.readtext(license_plate_crop)
-    # print("-----------------------", detections)
-    
     for detection in detections:
         bbox, text, score = detection
-
         text = text.upper().replace(' ', '')
-        # print("-----------------------", text)
-        
         return text, score
-
     return None, None
 
-def write_csv(results, output_path):
-    
-    with open(output_path, 'w') as f:
-        f.write('{},{},{},{},{},{},{},{}\n'.format(
-            'frame_number', 'track_id', 'car_bbox', 'car_bbox_score',
-            'license_plate_bbox', 'license_plate_bbox_score', 'license_plate_number',
-            'license_text_score'))
+# Function to save license plate images
+def save_license_plate_image(frame_number, track_id, plate_img):
+    output_path = os.path.join(output_folder, f"frame_{frame_number}_track_{track_id}.jpg")
+    cv.imwrite(output_path, plate_img)
 
-        for frame_number in results.keys():
-            for track_id in results[frame_number].keys():
-                # print(results[frame_number][track_id])
-                if 'car' in results[frame_number][track_id].keys() and \
-                   'license_plate' in results[frame_number][track_id].keys() and \
-                   'number' in results[frame_number][track_id]['license_plate'].keys():
-                    f.write('{},{},{},{},{},{},{},{}\n'.format(
-                        frame_number,
-                        track_id,
-                        '[{} {} {} {}]'.format(
-                            results[frame_number][track_id]['car']['bbox'][0],
-                            results[frame_number][track_id]['car']['bbox'][1],
-                            results[frame_number][track_id]['car']['bbox'][2],
-                            results[frame_number][track_id]['car']['bbox'][3]
-                        ),
-                        results[frame_number][track_id]['car']['bbox_score'],
-                        '[{} {} {} {}]'.format(
-                            results[frame_number][track_id]['license_plate']['bbox'][0],
-                            results[frame_number][track_id]['license_plate']['bbox'][1],
-                            results[frame_number][track_id]['license_plate']['bbox'][2],
-                            results[frame_number][track_id]['license_plate']['bbox'][3]
-                        ),
-                        results[frame_number][track_id]['license_plate']['bbox_score'],
-                        results[frame_number][track_id]['license_plate']['number'],
-                        results[frame_number][track_id]['license_plate']['text_score'])
-                    )
-                if 'truck' in results[frame_number][track_id].keys() and \
-                   'license_plate' in results[frame_number][track_id].keys() and \
-                   'number' in results[frame_number][track_id]['license_plate'].keys():
-                    f.write('{},{},{},{},{},{},{},{}\n'.format(
-                        frame_number,
-                        track_id,
-                        '[{} {} {} {}]'.format(
-                            results[frame_number][track_id]['truck']['bbox'][0],
-                            results[frame_number][track_id]['truck']['bbox'][1],
-                            results[frame_number][track_id]['truck']['bbox'][2],
-                            results[frame_number][track_id]['truck']['bbox'][3]
-                        ),
-                        results[frame_number][track_id]['truck']['bbox_score'],
-                        '[{} {} {} {}]'.format(
-                            results[frame_number][track_id]['license_plate']['bbox'][0],
-                            results[frame_number][track_id]['license_plate']['bbox'][1],
-                            results[frame_number][track_id]['license_plate']['bbox'][2],
-                            results[frame_number][track_id]['license_plate']['bbox'][3]
-                        ),
-                        results[frame_number][track_id]['license_plate']['bbox_score'],
-                        results[frame_number][track_id]['license_plate']['number'],
-                        results[frame_number][track_id]['license_plate']['text_score'])
-                    )
-        f.close()
+# Function to write the results to CSV
+def write_csv(results, output_file):
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write('frame_number,track_id,class,x1,y1,x2,y2,Number_license_plate\n')
+        for frame_number, objects in results.items():
+            for track_id, data in objects.items():
+                class_name = data['vehicle']['class_name']
+                bbox_obj = data['vehicle']['bbox']
+                license_plate = data.get('license_plate', None)
 
+                if license_plate:
+                    f.write('{},{},{},{},{},{},{},{}\n'.format(
+                        frame_number, track_id, class_name, 
+                        bbox_obj[0], bbox_obj[1], bbox_obj[2], bbox_obj[3], 
+                        license_plate['number']
+                    ))
+                else:
+                    f.write('{},{},{},{},{},{},{},{}\n'.format(
+                        frame_number, track_id, class_name, 
+                        bbox_obj[0], bbox_obj[1], bbox_obj[2], bbox_obj[3], 
+                        'No License Plate'
+                    ))
+
+# Initialize results dictionary
 results = {}
 
-# read video by index
+# Read video by index
 video = cv.VideoCapture(videos[0])
 
 ret = True
 frame_number = -1
-vehicles = [2, 5, 7]
-frame_height, frame_width, _ = video.shape
+vehicles = {2: 'car', 5: 'bus', 7: 'truck'}  # Map class_id to vehicle types
+frame_width = 1920  # Adjust the width according to your video
+frame_height = 1080  # Adjust the height according to your video
+output_video_path = 'output_video.avi'
+fourcc = cv.VideoWriter_fourcc(*'XVID')  # Codec for video writing
+video_writer = cv.VideoWriter(output_video_path, fourcc, 30.0, (frame_width, frame_height))
 
-# read the 10 first frames
+
 while ret:
     frame_number += 1
     ret, frame = video.read()
-    
 
-    if ret and frame_number < 100:
+    if ret:
         results[frame_number] = {}
-        
-        # vehicle detector
-        detections = coco_model.track(frame, persist=True, classes=[2, 5, 7])[0]
+
+        # Vehicle detector
+        detections = coco_model.track(frame, persist=True, classes=list(vehicles.keys()))[0]
         for detection in detections.boxes.data.tolist():
             x1, y1, x2, y2, track_id, score, class_id = detection
             if int(class_id) in vehicles and score > 0.5:
-                vehicle_bounding_boxes = []
-                vehicle_bounding_boxes.append([x1, y1, x2, y2, track_id, score])
-                for bbox in vehicle_bounding_boxes:
-                    # print(bbox)
-                    roi = frame[int(y1):int(y2), int(x1):int(x2)]
-                    
-                    # license plate detector for region of interest
-                    license_plates = np_model(roi)[0]
-                    
-                    # process license plate
-                    for license_plate in license_plates.boxes.data.tolist():
-                        plate_x1, plate_y1, plate_x2, plate_y2, plate_score, _ = license_plate
+                vehicle_class = vehicles[int(class_id)]  # Get the class name (car, bus, truck)
+                
+                # Region of interest (ROI) for license plate detection
+                roi = frame[int(y1):int(y2), int(x1):int(x2)]
 
-                        # cv.rectangle(frame, (int(x1 + plate_x1), int(y1 + plate_y1)), 
-                        #   (int(x1 + plate_x2), int(y1 + plate_y2)), 
-                        #   (0, 255, 0), 2)  # Green rectangle
-                        # plt.imshow(frame)
-                        # plt.show()
-                        # print(plate_y1, frame.shape)
-                        # Crop the plate from the region of interest
-                        plate = roi[int(plate_y1):int(plate_y2), int(plate_x1):int(plate_x2)]
-                        
-                        # Check if the license plate is within the bottom half of the ROI
-                        if y2 > (frame_height / 2):
-                            
-                            # de-colorize
-                            plate_gray = cv.cvtColor(plate, cv.COLOR_BGR2GRAY)
-                            
-                            # Show the cropped license plate for debugging
-                            
-                            # posterize
-                            # _, plate_treshold = cv.threshold(plate_gray, 0, 200, cv.THRESH_BINARY_INV)
-                            plate_treshold = cv.adaptiveThreshold(plate_gray, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 4)
-                            # plt.imshow(plate_treshold)
-                            # plt.show()
-                            # OCR
-                            np_text, np_score = read_license_plate(plate_treshold)
-                            print("-----------------------", np_text)
-                            # if plate could be read write results
-                            if np_text is not None:
-                                results[frame_number][track_id] = {
-                                    'car': {
-                                        'bbox': [x1, y1, x2, y2],
-                                        'bbox_score': score
-                                    },
-                                    'license_plate': {
-                                        'bbox': [plate_x1, plate_y1, plate_x2, plate_y2],
-                                        'bbox_score': plate_score,
-                                        'number': np_text,
-                                        'text_score': np_score
-                                    }
+                # License plate detector for region of interest
+                license_plates = np_model(roi)[0]
+
+                for license_plate in license_plates.boxes.data.tolist():
+                    plate_x1, plate_y1, plate_x2, plate_y2, plate_score, _ = license_plate
+
+                    # Crop the plate from the region of interest
+                    plate = roi[int(plate_y1):int(plate_y2), int(plate_x1):int(plate_x2)]
+
+                    # Check if the license plate is within the bottom half of the frame
+                    if y2 > (frame_height * 0.5):
+                        plate_gray = cv.cvtColor(plate, cv.COLOR_BGR2GRAY)
+
+                        # Apply adaptive thresholding for better OCR
+                        plate_thresh = cv.adaptiveThreshold(plate_gray, 255, 
+                                                            cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                            cv.THRESH_BINARY_INV, 21, 4)
+
+                        # OCR
+                        np_text, np_score = read_license_plate(plate_thresh)
+
+                        if np_text is not None:
+                            # Save detected license plate image
+                            save_license_plate_image(frame_number, track_id, plate)
+
+                            # Store results
+                            results[frame_number][track_id] = {
+                                'vehicle': {
+                                    'class_name': vehicle_class,
+                                    'bbox': [x1, y1, x2, y2],
+                                    'bbox_score': score
+                                },
+                                'license_plate': {
+                                    'bbox': [plate_x1, plate_y1, plate_x2, plate_y2],
+                                    'bbox_score': plate_score,
+                                    'number': np_text,
+                                    'text_score': np_score
                                 }
+                            }
+                        else:
+                            results[frame_number][track_id] = {
+                                'vehicle': {
+                                    'class_name': vehicle_class,
+                                    'bbox': [x1, y1, x2, y2],
+                                    'bbox_score': score
+                                },
+                                'license_plate': {
+                                    'bbox': [plate_x1, plate_y1, plate_x2, plate_y2],
+                                    'bbox_score': plate_score,
+                                    'number': None,
+                                    'text_score': None
+                                }
+                            }
+                        cv.rectangle(frame, (int(x1) + int(plate_x1), int(y1) + int(plate_y1)), 
+                                 (int(x1) + int(plate_x2), int(y1) + int(plate_y2)), (255, 0, 0), 2)
+                        cv.putText(frame, f'License: {np_text}', (int(x1), int(y2) + 30), 
+                               cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+    video_writer.write(frame)
 
 
+video_writer.release()
+# Save results to CSV
 write_csv(results, './results.csv')
+
+# Release video capture
 video.release()
